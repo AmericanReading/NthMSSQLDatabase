@@ -1,19 +1,39 @@
 <?php
 
-    class NthMSSQLResultSet implements Iterator {
-
-        private $result;		//Stores the MSSQL result resource.
-        private $position;		//The currently selected row in the result set.
-        private $numResults;	//How many results were returned?
-        private $checkSum;		//An MD5 checksum of the SQL query used to generate this result set.
+    /**
+     * @package NthMSSQLDatabase
+     */
+    
+    class NthMSSQLResultSet implements ArrayAccess, Countable, SeekableIterator {
 
         /**
-        * Instantiate a new NthMSSQLResultSet given an MSSQL result resource.
-        * 
-        * @param mixed $result The result resource from MSSQL
-        * @param string $sqlQuery The SQL query used to generate the result set.
-        * @return NthMSSQLResultSet
-        */
+         * @var object  MSSQL result resource
+         */
+        protected $result;
+        
+        /**
+         * @var int The currently selected row in the result set
+         */
+        private $position;
+        
+        /**
+         * @var int How many results were returned?
+         */
+        private $numResults;
+        
+        /**
+         * @var string An MD5 checksum of the SQL query used to generate this
+         */
+        private $checkSum;
+        
+
+        /**
+         * Instantiate a new NthMSSQLResultSet given an MSSQL result resource.
+         * 
+         * @param mixed $result The result resource from MSSQL
+         * @param string $sqlQuery The SQL query used to generate the result set.
+         * @return NthMSSQLResultSet
+         */
         public function __construct(&$result, $sqlQuery) {
             $this->result =& $result;
             $this->numResults = mssql_num_rows($this->result);
@@ -22,108 +42,244 @@
         }
 
         /**
-        * When the NthMSSQLResultSet object is destroyed, make sure to free the result resource.
-        * 
-        */
+         * When the NthMSSQLResultSet object is destroyed, make sure to free
+         * the result resource.
+         */
         public function __destruct() {
-            if(is_resource($this->result)) {
+            if (is_resource($this->result)) {
                 mssql_free_result($this->result);
             }
         }
 
+
+
+        ////////////////////////////////////////////////////////////////////////
+        // !Implemented Abstract Methods from Interfaces
+        // ---------------------------------------------------------------------
+        // ArrayAccess
+        // Countable
+        // SeekableIterator 
+        ////////////////////////////////////////////////////////////////////////
+        
+        
+        ////////////////////////////////////////////////////////////////////////
+        // !ArrayAccess methods
+        // ---------------------------------------------------------------------
+        // ::offsetExists()
+        // ::offsetGet()
+        // ::offsetSet()
+        // ::offsetUnset()
+        
         /**
-        * The current result position.
-        * Supports the Iterator interface.
-        * 
-        */
+         * Returns whether the passed offset is valid.
+         * 
+         * @param int $offset
+         * @return bool
+         */
+        public function offsetExists($offset) {
+        
+            if (is_int($offset)) {  
+                if ($offset >= 0 && $offset < $this->numResults) {
+                    return true;
+                } else {
+                    throw new OutOfBoundsException('Index out of range');
+                }
+            } else {
+                throw new InvalidArgumentException('Expected interger');
+            }
+
+        }
+
+        /**
+         * Fetches the result at the passed offset.
+         *  
+         * @param int $offset
+         * @return array
+         */
+        public function offsetGet($offset) {
+            
+            // Seek to the passed position.
+            $this->seekPointer($offset);
+            
+            // Fetch the data. This will advance the pointer.
+            $data = $this->fetch();
+
+            // Return to the original position.
+            $this->seekPointer($this->position);
+            
+            // Return the first column.
+            return $data;
+
+        }
+        
+        /**
+         * Always throws an exception because the result is read only.    
+         * 
+         * @param mixed $offset
+         * @param mixed $value
+         */
+        public function offsetSet($offset, $value) {
+            throw new Exception('Cannot alter row. ResultSet rows are read only.');
+        }
+        
+        /**
+         * Always throws an exception because the result is read only.
+         * 
+         * @param mixed $offset
+         */
+        public function offsetUnset($offset) {
+            throw new Exception('Cannot unset row. ResultSet rows are read only.');
+        }    
+
+
+
+        ////////////////////////////////////////////////////////////////////////
+        // !Countable methods
+        // ---------------------------------------------------------------------
+        // ::count()
+        
+        /**
+         * Returns the number of rows. Enables count($instance).
+         * 
+         * @return int
+         */
+        public function count() {
+            return $this->numResults;
+        }
+
+
+        
+        ////////////////////////////////////////////////////////////////////////////
+        // !SeekableIterator methods 
+        // -------------------------------------------------------------------------
+        // ::key()
+        // ::current()
+        // ::valid()
+        // ::next()
+        // ::rewind()
+        // ::seek()
+        
+        /**
+         * The current result position.
+         * 
+         * @return int
+         */
         public function key() {
             return $this->position;
         }
 
         /**
-        * The row stored at the current position, expressed as an associative array.
-        * Supports the Iterator interface.
-        * 
-        */
+         * Fetch the row at the current position.
+         *
+         * This method called the fetch() method, so overriding fetch() in a
+         * subclass will change functionality of this method as well.
+         *
+         * @return array
+         */
         public function current() {
-            mssql_data_seek($this->result, $this->position);
-            return mssql_fetch_assoc($this->result);
+            $this->seekPointer($this->position);
+            return $this->fetch();
         }
 
         /**
-        * Checks if the current position is valid.
-        * Supports the Iterator interface.
-        * 
-        */
+         * Checks if the current position is valid.
+         * 
+         * @return bool
+         */
         public function valid() {
             return ($this->position < $this->numResults);
         }
 
         /**
-        * Increments the current position.
-        * Supports the Iterator interface.
-        * 
-        */
+         * Increments the current position.
+         */
         public function next() {
             ++$this->position;
         }
 
         /**
-        * Moves the position back to the start of the record set.
-        * Supports the Iterator interface.
-        * 
-        */
+         * Moves the position back to the start of the record set.
+         * Supports the Iterator interface.
+         */
         public function rewind() {
             $this->position = 0;
         }
 
         /**
-        * Returns the number of records in this result set.
-        * 
-        */
-        public function numResults() {
-            return $this->numResults;
+         * Advances the pointer to the passed offset.
+         * 
+         * @param int $offset
+         */
+        public function seek($offset) {
+            $this->position = $offset;
+        }
+
+
+        
+        ////////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
+        
+        
+        
+        /**
+         * Fetch and return the current row. Because of how the result class is
+         * implemented, this advances the result object's pointer.
+         * 
+         * To use a differenct fetch method (e.g., as objects), subclass RecordSet
+         * and MySQLdb and redefine this function.
+         * 
+         * @return array
+         */
+        public function fetch() {
+            return mssql_fetch_array($this->result, MSSQL_ASSOC);
+        }
+   
+        /**
+         * Fetch all records and return an array.
+         * 
+         * @return array
+         */
+        public function fetchAll() {
+        
+            $arr = array();
+            
+            foreach ($this as $v) {
+                $arr[] = $v;
+            }
+            
+            return $arr;    
+            
         }
 
         /**
-        * Returns the value of the first field of the first row of this record set.
-        * 
-        */
-        public function firstValue() {
-            return mssql_result($this->result, 0, 0);
-        }
+         * Returns the value of the first field of the first row.
+         *
+         * @return string
+         */
+        public function fetchFirstValue() {
+        
+            // Seek to the first position.
+            $this->seekPointer(0);
+            
+            // Fetch the data. This will advance the pointer.
+            $data =  mssql_fetch_array($this->result, MSSQL_NUM);
 
+            // Return to the original position.
+            $this->seekPointer($this->position);
+            
+            // Return the first column.
+            return $data[0];
+            
+        }
+        
         /**
-        * Returns the entire record set as an associative array.
-        * This can consume a lot of memory if the record set is large.
-        * 
-        */
-        public function assocArray() {
-            //Rewind to the beginning of the result set.
-            mssql_data_seek($this->result, 0);
-            
-            $a = array();
-            
-            while($r = mssql_fetch_assoc($this->result)) { $a[] = $r; }
-            
-            return $a;
+         * Seek the result's pointer to the given offset.
+         */
+        protected function seekPointer($offset) {
+            mssql_data_seek($this->result, $offset);
         }
-
-        /**
-        * Return the first row of the result set as an associative array.
-        *
-        */
-        public function assocArraySingle() {
-            //Rewind to the beginning of the result set.
-            mssql_data_seek($this->result, 0);
-            
-            $a = array();
-            
-            $r = mssql_fetch_assoc($this->result);
-            
-            return $r;
-        }
-
+        
     }
 
 ?>
