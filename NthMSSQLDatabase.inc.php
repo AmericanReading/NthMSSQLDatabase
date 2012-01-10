@@ -146,6 +146,17 @@
             return new NthMSSQLResultSet($result, $sqlQuery);	
         }
 
+     	/**
+     	 * Make the passed string safe for queries.
+     	 *
+     	 * @param string $str The string to sanitize.
+     	 * @return string
+     	 */
+    	static public function real_escape_string($str) {
+            $str = str_replace("'", "''", $str);
+            return $str;
+        }
+    
     }
 
 ?>
